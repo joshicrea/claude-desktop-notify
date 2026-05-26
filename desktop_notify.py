@@ -128,53 +128,6 @@ def extract_cwd_from_raw(raw: str) -> str:
     return m.group(1).replace("\\\\", "\\")
 
 
-def extract_transcript_path_from_raw(raw: str) -> str:
-    m = re.search(r'"transcript_path"\s*:\s*"((?:[^"\\]|\\.)*)"', raw)
-    if not m:
-        return ""
-    return m.group(1).replace("\\\\", "\\")
-
-
-def get_recent_user_text(transcript_path: str, max_len: int = 60) -> str:
-    """transcript jsonl の末尾から最後のユーザーメッセージの冒頭を返す。
-    Claude Code の jsonl 構造: 各行が JSON。type='user' の message.content にユーザー発言。
-    """
-    if not transcript_path or not os.path.exists(transcript_path):
-        return ""
-    try:
-        with open(transcript_path, encoding="utf-8") as f:
-            lines = f.readlines()
-        for line in reversed(lines[-50:]):
-            try:
-                rec = json.loads(line)
-            except Exception:
-                continue
-            if rec.get("type") != "user":
-                continue
-            msg = rec.get("message", {})
-            content = msg.get("content", "") if isinstance(msg, dict) else ""
-            text = ""
-            if isinstance(content, str):
-                text = content
-            elif isinstance(content, list):
-                for c in content:
-                    if isinstance(c, dict) and c.get("type") == "text":
-                        text = c.get("text", "")
-                        break
-            text = text.strip()
-            # システムメッセージ（<system-reminder> 等）はスキップ
-            if not text or text.startswith("<"):
-                continue
-            # 1行に整形して切り詰める
-            text = " ".join(text.split())
-            if len(text) > max_len:
-                text = text[:max_len] + "…"
-            return text
-        return ""
-    except Exception:
-        return ""
-
-
 def make_tab_label(cwd: str) -> str:
     """cwd から短いタブラベルを生成。末尾2階層を返す。
     例:
@@ -230,22 +183,8 @@ def main() -> int:
     cwd = (payload.get("cwd") if payload else None) or extract_cwd_from_raw(raw)
     tab_label = make_tab_label(cwd)
 
-    # 直前のユーザー指示を取得（「何のタスクか」を示す手がかり）
-    transcript_path = (payload.get("transcript_path") if payload else None) or extract_transcript_path_from_raw(raw)
-    user_hint = get_recent_user_text(transcript_path)
-
-    # Notification イベントで custom title/message が来る場合
-    if payload:
-        custom_title = payload.get("title")
-        custom_message = payload.get("message")
-        if custom_title or custom_message:
-            title = custom_title or "Claude Code"
-            if tab_label:
-                title = f"{title} — {tab_label}"
-            show_toast(title, custom_message or "Claude Code からの通知")
-            return 0
-
-    # イベント種別に応じた既定の文言
+    # イベント種別に応じた固定文言（payload の title/message は信用しない。
+    # ブログ記事本文等が混入する事故を防ぐため）
     if event_kind.lower() == "notification":
         title = "承認待ち"
         message = "Claude Code が承認を待っています"
