@@ -133,6 +133,25 @@ def extract_cwd_from_raw(raw: str) -> str:
     return m.group(1).replace("\\\\", "\\")
 
 
+def detect_editor_protocol() -> str:
+    """実行中のエディタを検出してプロトコル名を返す。
+    Cursor.exe / Code.exe の実体パスを確認して優先順位で判定。
+    見つからなければ空文字（クリックアクション無効）を返す。
+    """
+    local = os.environ.get("LOCALAPPDATA", "")
+    program_files = os.environ.get("ProgramFiles", r"C:\Program Files")
+    candidates = [
+        (os.path.join(local, "Programs", "cursor", "Cursor.exe"), "cursor"),
+        (os.path.join(local, "Programs", "Microsoft VS Code", "Code.exe"), "vscode"),
+        (os.path.join(program_files, "Microsoft VS Code", "Code.exe"), "vscode"),
+        (os.path.join(local, "Programs", "Microsoft VS Code Insiders", "Code - Insiders.exe"), "vscode-insiders"),
+    ]
+    for path, proto in candidates:
+        if os.path.exists(path):
+            return proto
+    return ""
+
+
 def make_tab_label(cwd: str) -> str:
     """cwd から短いタブラベルを生成。末尾2階層を返す。
     例:
@@ -200,8 +219,17 @@ def main() -> int:
     if tab_label:
         title = f"{title} — {tab_label}"
 
-    # クリック時のアクションは現状無効化（vscode://起動でStore誘導される問題を回避）
-    show_toast(title, message)
+    # クリック時に該当エディタウィンドウを前面化する URI を構築
+    # 実体エディタを検出して対応プロトコル（cursor://, vscode://, vscode-insiders://）を選ぶ
+    launch_uri = ""
+    proto = detect_editor_protocol()
+    if cwd and proto:
+        import urllib.parse
+        normalized = cwd.replace("\\", "/")
+        encoded = urllib.parse.quote(normalized, safe="/:")
+        launch_uri = f"{proto}://file/{encoded}"
+
+    show_toast(title, message, launch_uri=launch_uri)
     return 0
 
 
