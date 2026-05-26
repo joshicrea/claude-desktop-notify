@@ -37,12 +37,17 @@ def log_debug(message: str) -> None:
         pass
 
 
-def build_toast_xml(title: str, message: str) -> str:
+def build_toast_xml(title: str, message: str, launch_uri: str = "") -> str:
     safe_title = xml.sax.saxutils.escape(title, {'"': "&quot;", "'": "&apos;"})
     safe_message = xml.sax.saxutils.escape(message, {'"': "&quot;", "'": "&apos;"})
+    if launch_uri:
+        safe_uri = xml.sax.saxutils.escape(launch_uri, {'"': "&quot;", "'": "&apos;"})
+        toast_attrs = f' launch="{safe_uri}" activationType="protocol"'
+    else:
+        toast_attrs = ""
     return (
         '<?xml version="1.0" encoding="utf-8"?>\n'
-        "<toast>"
+        f"<toast{toast_attrs}>"
         "<visual>"
         '<binding template="ToastGeneric">'
         f"<text>{safe_title}</text>"
@@ -54,8 +59,8 @@ def build_toast_xml(title: str, message: str) -> str:
     )
 
 
-def show_toast(title: str, message: str) -> None:
-    xml_body = build_toast_xml(title, message)
+def show_toast(title: str, message: str, launch_uri: str = "") -> None:
+    xml_body = build_toast_xml(title, message, launch_uri)
     xml_file = None
     ps_file = None
     try:
@@ -195,6 +200,7 @@ def main() -> int:
     if tab_label:
         title = f"{title} — {tab_label}"
 
+    # クリック時のアクションは現状無効化（vscode://起動でStore誘導される問題を回避）
     show_toast(title, message)
     return 0
 
