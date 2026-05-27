@@ -240,17 +240,8 @@ def main() -> int:
         except Exception:
             pass
 
-    # クリック時に該当エディタウィンドウを前面化する URI を構築
-    # 実体エディタを検出して対応プロトコル（cursor://, vscode://, vscode-insiders://）を選ぶ
-    launch_uri = ""
-    proto = detect_editor_protocol()
-    if cwd and proto:
-        import urllib.parse
-        normalized = cwd.replace("\\", "/")
-        encoded = urllib.parse.quote(normalized, safe="/:")
-        launch_uri = f"{proto}://file/{encoded}"
-
-    show_toast(title, message, launch_uri=launch_uri)
+    # クリック時のアクション無効化（cursor:// 起動が安定動作しないため）
+    show_toast(title, message)
 
     # 通知発行時刻を記録（次回クールダウン判定用）
     try:
