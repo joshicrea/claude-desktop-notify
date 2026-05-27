@@ -28,6 +28,12 @@ APP_ID = r"{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powersh
 
 LOG_PATH = os.path.expandvars(r"%TEMP%\claude_desktop_notify.log")
 
+# 直前通知時刻の記録ファイル（クールダウン判定用）
+LAST_NOTIFY_PATH = os.path.expandvars(r"%TEMP%\claude_desktop_notify_last.txt")
+
+# クールダウン秒数：これ未満の間隔の Stop 通知は抑制（連続ターン中の通知連発を防ぐ）
+NOTIFY_COOLDOWN_SEC = 60
+
 
 def log_debug(message: str) -> None:
     try:
@@ -219,6 +225,21 @@ def main() -> int:
     if tab_label:
         title = f"{title} — {tab_label}"
 
+    # クールダウン判定：直前通知から短時間の場合はスキップ
+    # （Notification イベント＝承認待ちは抑制せず必ず通知。Stop だけ抑制）
+    import time
+    now = time.time()
+    if event_kind.lower() != "notification":
+        try:
+            if os.path.exists(LAST_NOTIFY_PATH):
+                with open(LAST_NOTIFY_PATH, encoding="utf-8") as f:
+                    last_ts = float(f.read().strip() or "0")
+                if now - last_ts < NOTIFY_COOLDOWN_SEC:
+                    log_debug(f"[main] cooldown skip (last={last_ts}, elapsed={now - last_ts:.1f}s)")
+                    return 0
+        except Exception:
+            pass
+
     # クリック時に該当エディタウィンドウを前面化する URI を構築
     # 実体エディタを検出して対応プロトコル（cursor://, vscode://, vscode-insiders://）を選ぶ
     launch_uri = ""
@@ -230,6 +251,14 @@ def main() -> int:
         launch_uri = f"{proto}://file/{encoded}"
 
     show_toast(title, message, launch_uri=launch_uri)
+
+    # 通知発行時刻を記録（次回クールダウン判定用）
+    try:
+        with open(LAST_NOTIFY_PATH, "w", encoding="utf-8") as f:
+            f.write(str(now))
+    except Exception:
+        pass
+
     return 0
 
 
