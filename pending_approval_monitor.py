@@ -100,9 +100,10 @@ try {{
         with tempfile.NamedTemporaryFile(mode="w", suffix=".ps1", delete=False, encoding="utf-8") as pf:
             pf.write(ps_content)
             ps_file = pf.name
+        CREATE_NO_WINDOW = 0x08000000
         subprocess.run(
-            ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", ps_file],
-            capture_output=True, timeout=8, check=False,
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", ps_file],
+            capture_output=True, timeout=8, check=False, creationflags=CREATE_NO_WINDOW,
         )
     except Exception as e:
         log(f"show_toast exception: {e!r}")

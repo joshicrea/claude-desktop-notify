@@ -34,6 +34,10 @@ LAST_NOTIFY_PATH = os.path.expandvars(r"%TEMP%\claude_desktop_notify_last.txt")
 # クールダウン秒数：これ未満の間隔の Stop 通知は抑制（連続ターン中の通知連発を防ぐ）
 NOTIFY_COOLDOWN_SEC = 60
 
+# 「長い作業」判定の閾値：直前ユーザー入力からこの秒数未満で終わったターンは通知しない
+# 短い連続対話を黙らせ、長時間作業の完了時のみ通知する
+LONG_TASK_THRESHOLD_SEC = 60
+
 
 def log_debug(message: str) -> None:
     try:
@@ -102,17 +106,21 @@ try {{
             pf.write(ps_content)
             ps_file = pf.name
 
+        # CREATE_NO_WINDOW でPowerShell窓を完全非表示にする
+        CREATE_NO_WINDOW = 0x08000000
         result = subprocess.run(
             [
                 "powershell.exe",
                 "-NoProfile",
                 "-NonInteractive",
+                "-WindowStyle", "Hidden",
                 "-ExecutionPolicy", "Bypass",
                 "-File", ps_file,
             ],
             capture_output=True,
             timeout=10,
             check=False,
+            creationflags=CREATE_NO_WINDOW,
         )
         log_debug(
             f"[show_toast] rc={result.returncode} "
@@ -137,6 +145,56 @@ def extract_cwd_from_raw(raw: str) -> str:
     if not m:
         return ""
     return m.group(1).replace("\\\\", "\\")
+
+
+def extract_transcript_path_from_raw(raw: str) -> str:
+    m = re.search(r'"transcript_path"\s*:\s*"((?:[^"\\]|\\.)*)"', raw)
+    if not m:
+        return ""
+    return m.group(1).replace("\\\\", "\\")
+
+
+def get_last_user_msg_timestamp(transcript_path: str):
+    """transcript jsonl の末尾から、最新の user メッセージ（自然な発言）の
+    timestamp を Unix epoch で返す。tool_result のみのエントリは除外。
+    取れなかったら None。
+    """
+    if not transcript_path or not os.path.exists(transcript_path):
+        return None
+    try:
+        with open(transcript_path, encoding="utf-8") as f:
+            lines = f.readlines()
+        for line in reversed(lines[-100:]):
+            try:
+                rec = json.loads(line)
+            except Exception:
+                continue
+            if rec.get("type") != "user":
+                continue
+            msg = rec.get("message", {})
+            content = msg.get("content") if isinstance(msg, dict) else None
+            is_natural_user_msg = False
+            if isinstance(content, str) and content.strip():
+                is_natural_user_msg = True
+            elif isinstance(content, list):
+                for c in content:
+                    if isinstance(c, dict) and c.get("type") == "text":
+                        is_natural_user_msg = True
+                        break
+            if not is_natural_user_msg:
+                continue
+            ts_str = rec.get("timestamp", "")
+            if not ts_str:
+                continue
+            try:
+                from datetime import datetime
+                ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                return ts.timestamp()
+            except Exception:
+                continue
+        return None
+    except Exception:
+        return None
 
 
 def detect_editor_protocol() -> str:
@@ -225,20 +283,29 @@ def main() -> int:
     if tab_label:
         title = f"{title} — {tab_label}"
 
-    # クールダウン判定：直前通知から短時間の場合はスキップ
-    # （Notification イベント＝承認待ちは抑制せず必ず通知。Stop だけ抑制）
+    # 通知抑制ロジック（Stop イベントのみ。Notification は常に通知）
     import time
     now = time.time()
     if event_kind.lower() != "notification":
+        # クールダウン判定：直前通知から短時間の場合はスキップ
         try:
             if os.path.exists(LAST_NOTIFY_PATH):
                 with open(LAST_NOTIFY_PATH, encoding="utf-8") as f:
                     last_ts = float(f.read().strip() or "0")
                 if now - last_ts < NOTIFY_COOLDOWN_SEC:
-                    log_debug(f"[main] cooldown skip (last={last_ts}, elapsed={now - last_ts:.1f}s)")
+                    log_debug(f"[main] cooldown skip (elapsed={now - last_ts:.1f}s)")
                     return 0
         except Exception:
             pass
+        # 経過時間フィルタ：直前のユーザー入力から短時間で終わったターンは
+        # 「短い対話」として通知しない。長時間作業の完了のみ通知する。
+        transcript_path = (payload.get("transcript_path") if payload else None) or extract_transcript_path_from_raw(raw)
+        last_user_ts = get_last_user_msg_timestamp(transcript_path)
+        if last_user_ts is not None:
+            elapsed = now - last_user_ts
+            if elapsed < LONG_TASK_THRESHOLD_SEC:
+                log_debug(f"[main] short task skip (elapsed_since_user={elapsed:.1f}s)")
+                return 0
 
     # クリック時のアクション無効化（cursor:// 起動が安定動作しないため）
     show_toast(title, message)
